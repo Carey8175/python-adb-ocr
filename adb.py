@@ -115,4 +115,25 @@ class AdbOCR:
         """
         return self._device and self._device.available
 
+    async def get_screen_size(self) -> tuple[int, int]:
+        """
+        Get the screen size.
 
+        Returns:
+            (width, height) of the screen.
+        """
+        if not self.is_connected():
+            return 0, 0
+
+        shell_output = await self._device.shell("wm size | awk 'END{print $3}'")
+        return shell_output.replace("\n", "")
+
+    async def get_screen_density(self) -> int:
+        """
+        Get the screen density.
+
+        Returns:
+             the number of pixels per inch.
+        """
+        shell_output = await self._device.shell("wm density | awk 'END{print $3}'")
+        return shell_output.replace("\n", "")
