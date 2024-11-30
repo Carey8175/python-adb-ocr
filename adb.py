@@ -7,8 +7,29 @@ import random
 from loguru import logger
 from numpy import ndarray
 from paddleocr import PaddleOCR
+from dataclasses import dataclass
 from adb_shell.adb_device import AdbDeviceTcp
 from adb_shell.adb_device_async import AdbDeviceTcpAsync
+
+
+@dataclass
+class BoundingBox:
+    x: int
+    y: int
+    width: int
+    height: int
+
+    def get_middle_coordinate(self) -> tuple[int, int]:
+        """
+        Get the middle coordinate of the bounding box.
+        :return:
+        """
+        return self.x + self.width // 2, self.y + self.height // 2
+
+
+@dataclass
+class OcrResult(BoundingBox):
+    text: str
 
 
 class AdbOCR:
@@ -17,7 +38,7 @@ class AdbOCR:
         self.ocr_engine = None
         self._random = random.Random()
 
-    async def load(self, port: int, host: str = "localhost", scan_if_fail=True) -> None:
+    async def load(self, port: int, host: str = "localhost", scan_if_fail=True, language: str = 'ch') -> None:
         """
         Load the ADB connection.
 
@@ -25,17 +46,17 @@ class AdbOCR:
             port: The port to connect to.
             host: The host to connect to.
             scan_if_fail: Whether to scan for local devices if the connection fails.
-
+            language: The language to use for the OCR engine.
         Returns:
         """
-        task1 = asyncio.create_task(self._init_ocr_engine())
+        task1 = asyncio.create_task(self._init_ocr_engine(language=language))
         task2 = asyncio.create_task(self._connect_device(port=port, host=host, scan_if_fail=scan_if_fail))
 
         await task1
         await task2
 
     async def _connect_device(
-        self,
+            self,
             port: int,
             host: str = "localhost",
             scan_if_fail: bool = True
@@ -116,13 +137,13 @@ class AdbOCR:
         logger.warning("No local device was found. Make sure ADB is enabled in your emulator's settings.")
         return None
 
-    async def _init_ocr_engine(self) -> None:
+    async def _init_ocr_engine(self, language: str = 'ch') -> None:
         """
         Initialize the OCR engine.
 
         Returns:
         """
-        self.ocr_engine = PaddleOCR(lang='ch', show_log=False)
+        self.ocr_engine = PaddleOCR(lang=language, show_log=False)
 
     def is_connected(self) -> bool:
         """
@@ -230,3 +251,45 @@ class AdbOCR:
         Send a back key press event to the device.
         """
         await self._device.shell("input keyevent 4")
+
+    async def get_screen_text(self, detect_area: BoundingBox | None = None, confidence=0.85) -> list[OcrResult] | None:
+        """
+        Get the text on the screen.
+
+        Args:
+            detect_area: The area to detect text in.
+            confidence: The confidence level to use when detecting text. Defaults to 0.85.
+
+        Returns:
+            The text on the screen.
+        """
+        if not self.is_connected():
+            logger.warning("Please use the load method to connect to the device before OCR.")
+            return None
+
+        screen = await self.get_screen()
+        # crop screen according to detect_area
+        if detect_area:
+            screen = screen[detect_area.y:detect_area.y + detect_area.height,
+                            detect_area.x:detect_area.x + detect_area.width]
+
+        if not (result := self.ocr_engine.ocr(screen, cls=False)):
+            logger.debug("No text was found on the screen.")
+            return None
+
+        ocr_results: list[OcrResult] = []
+
+        if not (result := result[0]):
+            logger.debug("No text was found on the screen.")
+            return None
+
+        for res in result:
+            ocr_results.append(OcrResult(
+                x=res[0][0][0],
+                y=res[0][0][1],
+                width=res[0][2][0] - res[0][0][0],
+                height=res[0][2][1] - res[0][0][1],
+                text=res[1][0]
+            )) if res[1][1] > confidence else None
+
+        return ocr_results if ocr_results else None
