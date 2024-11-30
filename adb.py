@@ -136,4 +136,5 @@ class AdbOCR:
              the number of pixels per inch.
         """
         shell_output = await self._device.shell("wm density | awk 'END{print $3}'")
+
         return shell_output.replace("\n", "")
